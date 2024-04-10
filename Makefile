@@ -326,6 +326,10 @@ ifneq ($(filter armv8%,$(UNAME_M)),)
 	CXXFLAGS += -mfpu=neon-fp-armv8 -mfp16-format=ieee -funsafe-math-optimizations -mno-unaligned-access
 endif
 
+
+## Add LDFLAGS for ZMQ
+LDFLAGS += -lzmq
+
 #
 # Print build information
 #

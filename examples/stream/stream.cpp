@@ -5,6 +5,8 @@
 #include "common-sdl.h"
 #include "common.h"
 #include "whisper.h"
+#include "zmq.hpp"
+#include "json.hpp"
 
 #include <cassert>
 #include <cstdio>
@@ -41,6 +43,8 @@ struct whisper_params {
     std::string model     = "models/ggml-base.en.bin";
     std::string fname_out;
 };
+
+using json = nlohmann::json;
 
 void whisper_print_usage(int argc, char ** argv, const whisper_params & params);
 
@@ -134,6 +138,10 @@ int main(int argc, char ** argv) {
     params.no_timestamps  = !use_vad;
     params.no_context    |= use_vad;
     params.max_tokens     = 0;
+
+    zmq::context_t zctx;
+    zmq::socket_t sock(zctx, zmq::socket_type::pub);
+    sock.bind("ipc:///tmp/voice-data");
 
     // init audio
 
@@ -344,11 +352,23 @@ int main(int argc, char ** argv) {
                 }
 
                 const int n_segments = whisper_full_n_segments(ctx);
+                std::string recognized_text;
                 for (int i = 0; i < n_segments; ++i) {
                     const char * text = whisper_full_get_segment_text(ctx, i);
+                    recognized_text += text;
 
                     if (params.no_timestamps) {
+                        // send over ZMQ
+
                         printf("%s", text);
+                        // zmq::message_t message(recognized_text.size());
+                        // memcpy(message.data(), recognized_text.data(), recognized_text.size());
+                        // socket.send(message);
+                        // socket.send(zmq::buffer(text), zmq::send_flags::none);
+                        
+                        sock.send(zmq::buffer(recognized_text), zmq::send_flags::none);
+
+
                         fflush(stdout);
 
                         if (params.fname_out.length() > 0) {
@@ -367,6 +387,15 @@ int main(int argc, char ** argv) {
                         output += "\n";
 
                         printf("%s", output.c_str());
+                        
+                                   // Create JSON object
+                        json response;
+                        response["text"] = recognized_text;
+                        response["timestamp"] = t1;
+
+                        // Convert JSON object to string
+                        std::string json_string = response.dump();
+                        sock.send(zmq::buffer(json_string), zmq::send_flags::none);
                         fflush(stdout);
 
                         if (params.fname_out.length() > 0) {
@@ -414,6 +443,9 @@ int main(int argc, char ** argv) {
 
     whisper_print_timings(ctx);
     whisper_free(ctx);
+
+    zctx.close();
+    sock.close();
 
     return 0;
 }
